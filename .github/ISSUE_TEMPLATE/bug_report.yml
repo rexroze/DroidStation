@@ -1,0 +1,112 @@
+name: Bug Report
+description: Something isn't working correctly
+title: "[Bug]: "
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug. The more detail you provide, the faster it can be fixed.
+
+  - type: input
+    id: device
+    attributes:
+      label: Device
+      description: Brand and model of your Android device
+      placeholder: "e.g. Samsung Galaxy S23"
+    validations:
+      required: true
+
+  - type: input
+    id: chipset
+    attributes:
+      label: Chipset / SoC
+      description: The processor in your device
+      placeholder: "e.g. Snapdragon 8 Gen 2 / Exynos 2200"
+    validations:
+      required: true
+
+  - type: input
+    id: android
+    attributes:
+      label: Android Version
+      description: Found in Settings → About Phone
+      placeholder: "e.g. Android 14 / One UI 6.1"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: de
+    attributes:
+      label: Desktop Environment
+      options:
+        - XFCE4
+        - KDE Plasma
+        - LXQt
+        - GNOME
+        - Did not reach DE selection
+    validations:
+      required: true
+
+  - type: dropdown
+    id: distro
+    attributes:
+      label: Proot Distro
+      options:
+        - Ubuntu 22.04
+        - Debian 12
+        - Kali Linux
+        - Did not reach distro selection
+        - Used --no-proot
+    validations:
+      required: true
+
+  - type: dropdown
+    id: installer_mode
+    attributes:
+      label: Installer Mode
+      options:
+        - Interactive prompts (default)
+        - TUI (dialog/whiptail)
+        - Flags (--de= etc.)
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: Describe the bug clearly. What did you expect to happen instead?
+      placeholder: "The script crashed at step X with error Y..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to Reproduce
+      description: Exact steps to trigger the bug
+      placeholder: |
+        1. Run `bash droidstation-setup.sh`
+        2. Select XFCE4
+        3. Select Ubuntu
+        4. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: log
+    attributes:
+      label: Install Log
+      description: Paste the relevant section from `~/droidstation-install.log` or the terminal output
+      render: shell
+    validations:
+      required: false
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else?
+      description: ROM, custom kernel, flags used, workarounds you tried
+    validations:
+      required: false
