@@ -14,16 +14,18 @@
 #
 #  What you get:
 #    ├─ Desktop: XFCE4 / KDE Plasma / LXQt / GNOME
-#    ├─ Distro:  Ubuntu / Debian / Kali (via Proot)
+#    ├─ Distro:  Ubuntu / Debian / Kali (via Proot — optional)
 #    ├─ GPU:     Turnip/Zink (Adreno) · LLVMpipe fallback
 #    ├─ Audio:   PulseAudio
 #    ├─ Dev:     Python 3, Node.js/TypeScript (user choice)
 #    ├─ Extras:  VS Code, Firefox, Chromium, File Manager (user choice)
+#    ├─ Container Apps: LibreOffice, GIMP, Inkscape, VLC (optional)
 #    ├─ Proot App Bridge — proot apps appear in desktop menu
 #    ├─ VNC remote display (optional)
 #    ├─ Wine/Hangover — run Windows x86_64 apps (optional)
 #    ├─ Dark theme: Adwaita-dark + Dracula terminal
-#    └─ Global commands: startdesk / stopdesk
+#    ├─ Global commands: startdesk / stopdesk
+#    └─ Quick-start help card on completion · uninstall.sh for clean removal
 #
 #  Installer modes (auto-detected):
 #    · Flags:    bash setup.sh --de=xfce --distro=ubuntu --dev=python,node
@@ -36,7 +38,7 @@
 
 # ── GLOBAL CONFIG ────────────────────────────────────────────────────
 SCRIPT_VERSION="1.0"
-TOTAL_STEPS=14
+TOTAL_STEPS=10   # recalculated after selections
 CURRENT_STEP=0
 LOG_FILE="$HOME/droidstation-install.log"
 
@@ -45,6 +47,7 @@ DE_CHOICE="1"
 DE_NAME="XFCE4"
 PROOT_DISTRO="ubuntu"
 PROOT_LABEL="Ubuntu 22.04"
+PROOT_USER="droiduser"
 GPU_DRIVER="freedreno"
 DEX_MODE="false"
 INSTALLER_MODE="prompt"
@@ -59,8 +62,22 @@ INSTALL_CHROMIUM="false"
 INSTALL_FILEMANAGER="false"
 INSTALL_VNC="false"
 INSTALL_WINE="false"
+INSTALL_PROOT="true"
+INSTALL_LIBREOFFICE="false"
+INSTALL_GIMP="false"
+INSTALL_INKSCAPE="false"
+INSTALL_VLC="false"
 VNC_PASS="123456"
 VNC_GEOMETRY="1280x720"
+
+# Estimated install sizes (MB) — approximate
+SIZE_CORE=300
+SIZE_XFCE4=400; SIZE_KDE=900; SIZE_LXQT=200; SIZE_GNOME=700
+SIZE_PYTHON=100; SIZE_NODE=150
+SIZE_VSCODE=220; SIZE_FIREFOX=260; SIZE_CHROMIUM=310; SIZE_FILES=50
+SIZE_VNC=30; SIZE_WINE=600
+SIZE_PROOT_BASE=800
+SIZE_LIBREOFFICE=700; SIZE_GIMP=350; SIZE_INKSCAPE=250; SIZE_VLC=120
 
 # ── COLORS ───────────────────────────────────────────────────────────
 RED='\033[0;31m'
@@ -80,21 +97,29 @@ show_help() {
   echo "Usage: bash droidstation-setup.sh [OPTIONS]"
   echo ""
   echo "Options:"
-  echo "  --de=<xfce|kde|lxqt|gnome>                Desktop environment"
-  echo "  --distro=<ubuntu|debian|kali>              Proot Linux distro"
-  echo "  --dev=<python,node>                        Dev stacks (comma-separated)"
-  echo "  --extras=<vscode,firefox,chromium,files>   Apps (comma-separated)"
-  echo "  --vnc                                      Install VNC server"
-  echo "  --wine                                     Install Wine/Hangover"
-  echo "  --no-proot                                 Skip Proot container"
-  echo "  --help                                     Show this help"
+  echo "  --de=<xfce|kde|lxqt|gnome>                          Desktop environment"
+  echo "  --distro=<ubuntu|debian|kali>                        Proot Linux distro"
+  echo "  --dev=<python,node>                                  Dev stacks (comma-separated)"
+  echo "  --extras=<vscode,firefox,chromium,files,             Apps (comma-separated)"
+  echo "           libreoffice,gimp,inkscape,vlc>"
+  echo "  --vnc                                                Install VNC server"
+  echo "  --wine                                               Install Wine/Hangover"
+  echo "  --no-proot                                           Skip Proot container"
+  echo "  --user=<username>                                    Container username (default: droiduser)"
+  echo "  --help                                               Show this help"
   echo ""
   echo "Examples:"
   echo "  # Full setup with flags:"
-  echo "  bash droidstation-setup.sh --de=xfce --distro=ubuntu --dev=python,node --extras=vscode,firefox"
+  echo "  bash droidstation-setup.sh --de=xfce --distro=ubuntu --dev=python,node --extras=vscode,firefox,libreoffice"
+  echo ""
+  echo "  # Skip the Linux container (saves ~800 MB):"
+  echo "  bash droidstation-setup.sh --no-proot"
   echo ""
   echo "  # Interactive (default):"
   echo "  bash droidstation-setup.sh"
+  echo ""
+  echo "Uninstall:"
+  echo "  bash uninstall.sh"
   echo ""
 }
 
@@ -139,10 +164,15 @@ parse_flags() {
           [ "$e" = "firefox" ]                         && INSTALL_FIREFOX="true"
           [ "$e" = "chromium" ]                        && INSTALL_CHROMIUM="true"
           { [ "$e" = "files" ] || [ "$e" = "filemanager" ]; } && INSTALL_FILEMANAGER="true"
+          [ "$e" = "libreoffice" ]                     && INSTALL_LIBREOFFICE="true"
+          [ "$e" = "gimp" ]                            && INSTALL_GIMP="true"
+          [ "$e" = "inkscape" ]                        && INSTALL_INKSCAPE="true"
+          [ "$e" = "vlc" ]                             && INSTALL_VLC="true"
         done;;
       --vnc)      FLAG_USED="true"; INSTALL_VNC="true";;
       --wine)     FLAG_USED="true"; INSTALL_WINE="true";;
       --no-proot) FLAG_USED="true"; INSTALL_PROOT="false";;
+      --user=*)   FLAG_USED="true"; PROOT_USER="${arg#*=}";;
     esac
   done
   [ "$FLAG_USED" = "true" ] && INSTALLER_MODE="flags"
@@ -158,6 +188,32 @@ detect_installer_mode() {
   else
     INSTALLER_MODE="prompt"
   fi
+}
+
+# ── SYSTEM RESOURCE CHECK ─────────────────────────────────────────────
+check_system_resources() {
+  echo -e "${CYAN}━━ System Resources ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+  echo ""
+
+  local free_mb ram_mb stor_color ram_color
+  free_mb=$(df -BM "$HOME" 2>/dev/null | awk 'NR==2{gsub(/M/,"",$4); print $4}')
+  free_mb=${free_mb:-0}
+  ram_mb=$(free -m 2>/dev/null | awk '/^Mem:/{print $2}')
+  ram_mb=${ram_mb:-0}
+
+  [ "$free_mb" -ge 4000 ] && stor_color="$GREEN" || { [ "$free_mb" -ge 2000 ] && stor_color="$YELLOW" || stor_color="$RED"; }
+  [ "$ram_mb"  -ge 4000 ] && ram_color="$GREEN"  || { [ "$ram_mb"  -ge 2500 ] && ram_color="$YELLOW"  || ram_color="$RED";  }
+
+  printf "  ${WHITE}Free storage  :${NC} ${stor_color}%s MB${NC}\n" "$free_mb"
+  printf "  ${WHITE}RAM (total)   :${NC} ${ram_color}%s MB${NC}\n"  "$ram_mb"
+  echo -e "  ${GRAY}Recommended   : 4,000 MB storage · 4,000 MB RAM${NC}"
+
+  if [ "$free_mb" -lt 2000 ]; then
+    echo -e "\n  ${RED}⚠  Very low storage — consider skipping proot or large apps.${NC}"
+  elif [ "$free_mb" -lt 4000 ]; then
+    echo -e "\n  ${YELLOW}💡 Storage is tight — consider skipping proot or large apps.${NC}"
+  fi
+  echo ""
 }
 
 # ── PROGRESS BAR ─────────────────────────────────────────────────────
@@ -184,17 +240,19 @@ spinner() {
   local msg=$2
   local spin='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
   local i=0
+  printf "  ${YELLOW}⏳${NC} %-52s\n" "$msg"
   while kill -0 "$pid" 2>/dev/null; do
     i=$(( (i+1) % 10 ))
-    printf "\r  ${YELLOW}⏳${NC} %-52s ${CYAN}${spin:$i:1}${NC}" "$msg"
+    printf "\033[1A\033[2K  ${CYAN}${spin:$i:1}${NC} %-52s\n" "$msg"
     sleep 0.1
   done
   wait "$pid"
   local ec=$?
+  printf "\033[1A\033[2K"
   if [ $ec -eq 0 ]; then
-    printf "\r  ${GREEN}✓${NC} %-52s\n" "$msg"
+    printf "  ${GREEN}✓${NC} %-52s\n" "$msg"
   else
-    printf "\r  ${RED}✗${NC} %-52s ${RED}(see $LOG_FILE)${NC}\n" "$msg"
+    printf "  ${RED}✗${NC} %-52s ${RED}(see $LOG_FILE)${NC}\n" "$msg"
   fi
   return $ec
 }
@@ -285,13 +343,20 @@ detect_device() {
 # ── SELECTION: NUMBERED PROMPTS ──────────────────────────────────────
 select_options_prompt() {
 
+  # Reset flags on re-entry (go-back support)
+  INSTALL_PYTHON="false"; INSTALL_NODE="false"
+  INSTALL_VSCODE="false"; INSTALL_FIREFOX="false"; INSTALL_CHROMIUM="false"
+  INSTALL_FILEMANAGER="false"; INSTALL_VNC="false"; INSTALL_WINE="false"
+  INSTALL_PROOT="true"; INSTALL_LIBREOFFICE="false"; INSTALL_GIMP="false"
+  INSTALL_INKSCAPE="false"; INSTALL_VLC="false"
+
   # Desktop Environment
   echo -e "${CYAN}━━ Desktop Environment ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
   echo ""
-  echo -e "  ${WHITE}1) XFCE4${NC}       ${GREEN}(Recommended)${NC} — Fast, DeX-friendly, macOS dock"
-  echo -e "  ${WHITE}2) KDE Plasma${NC}  — Full Windows-style, needs strong GPU/RAM"
-  echo -e "  ${WHITE}3) LXQt${NC}        — Ultra-lightweight, best for Exynos/older devices"
-  echo -e "  ${WHITE}4) GNOME${NC}       — Modern, touch-friendly ${YELLOW}(heavy)${NC}"
+  echo -e "  ${WHITE}1) XFCE4${NC}       ${GREEN}(Recommended)${NC} — Fast, DeX-friendly, macOS dock  ${GRAY}~${SIZE_XFCE4} MB${NC}"
+  echo -e "  ${WHITE}2) KDE Plasma${NC}  — Full Windows-style, needs strong GPU/RAM         ${GRAY}~${SIZE_KDE} MB${NC}"
+  echo -e "  ${WHITE}3) LXQt${NC}        — Ultra-lightweight, best for Exynos/older devices  ${GRAY}~${SIZE_LXQT} MB${NC}"
+  echo -e "  ${WHITE}4) GNOME${NC}       — Modern, touch-friendly ${YELLOW}(heavy)${NC}                  ${GRAY}~${SIZE_GNOME} MB${NC}"
   echo ""
   [ "$GPU_DRIVER" = "swrast" ] && echo -e "  ${YELLOW}💡 Mali GPU — XFCE or LXQt strongly recommended${NC}\n"
   while true; do
@@ -310,35 +375,71 @@ select_options_prompt() {
   esac
   echo -e "  ${GREEN}✓ Selected: $DE_NAME${NC}\n"
 
-  # Proot distro
-  echo -e "${CYAN}━━ Linux Distro (inside Proot container) ━━━━━━━━━━━━━━━━━━━━━${NC}"
+  # Linux Container (Proot)
+  echo -e "${CYAN}━━ Linux Container (Proot — Optional) ━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
   echo ""
-  echo -e "  ${WHITE}1) Ubuntu 22.04${NC}  ${GREEN}(Recommended)${NC} — Largest package compatibility"
-  echo -e "  ${WHITE}2) Debian 12${NC}     — Minimal, rock-stable"
-  echo -e "  ${WHITE}3) Kali Linux${NC}    — Security & pentesting tools"
+  echo -e "  A Linux container lets you run Ubuntu/Debian apps on Android"
+  echo -e "  with full GPU acceleration (Turnip/Zink). Required for"
+  echo -e "  LibreOffice, GIMP, Inkscape, VLC, and other desktop apps."
+  echo -e "  ${GRAY}Base download: ~${SIZE_PROOT_BASE} MB${NC}"
   echo ""
-  while true; do
-    printf "  Enter number (1-3) [default: 1]: "
-    read -r DISTRO_INPUT </dev/tty
-    DISTRO_INPUT=${DISTRO_INPUT:-1}
-    echo "$DISTRO_INPUT" | grep -qE '^[1-3]$' && break
-  done
-  case $DISTRO_INPUT in
-    1) PROOT_DISTRO="ubuntu";         PROOT_LABEL="Ubuntu 22.04";;
-    2) PROOT_DISTRO="debian";         PROOT_LABEL="Debian 12";;
-    3) PROOT_DISTRO="kali-nethunter"; PROOT_LABEL="Kali Linux";;
-  esac
-  echo -e "  ${GREEN}✓ Distro: $PROOT_LABEL${NC}\n"
+  printf "  Install Linux Container? (Y/n) [default: Y]: "
+  read -r PROOT_ANS </dev/tty
+  PROOT_ANS=${PROOT_ANS:-Y}
+  if echo "$PROOT_ANS" | grep -qi '^y'; then
+    INSTALL_PROOT="true"
+    echo ""
+    echo -e "  ${WHITE}1) Ubuntu 22.04${NC}  ${GREEN}(Recommended)${NC} — Best app compatibility  ${GRAY}~600 MB rootfs${NC}"
+    echo -e "  ${WHITE}2) Debian 12${NC}     — Minimal, rock-stable                    ${GRAY}~450 MB rootfs${NC}"
+    echo -e "  ${WHITE}3) Kali Linux${NC}    — Security & pentesting tools              ${GRAY}~1.2 GB rootfs${NC}"
+    echo ""
+    while true; do
+      printf "  Enter number (1-3) [default: 1]: "
+      read -r DISTRO_INPUT </dev/tty
+      DISTRO_INPUT=${DISTRO_INPUT:-1}
+      echo "$DISTRO_INPUT" | grep -qE '^[1-3]$' && break
+    done
+    case $DISTRO_INPUT in
+      1) PROOT_DISTRO="ubuntu";         PROOT_LABEL="Ubuntu 22.04";;
+      2) PROOT_DISTRO="debian";         PROOT_LABEL="Debian 12";;
+      3) PROOT_DISTRO="kali-nethunter"; PROOT_LABEL="Kali Linux";;
+    esac
+    echo -e "  ${GREEN}✓ Distro: $PROOT_LABEL${NC}\n"
+
+    # Apps inside the container
+    echo -e "${CYAN}━━ Apps inside Linux Container ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "  ${GRAY}These install inside $PROOT_LABEL (via apt) and appear in your desktop menu.${NC}"
+    echo ""
+    printf "  Install LibreOffice (office suite)?    (y/N)  ~${SIZE_LIBREOFFICE} MB: "
+    read -r LO_ANS </dev/tty; LO_ANS=${LO_ANS:-N}
+    echo "$LO_ANS" | grep -qi '^y' && INSTALL_LIBREOFFICE="true"
+
+    printf "  Install GIMP (image editor)?           (y/N)  ~${SIZE_GIMP} MB: "
+    read -r GIMP_ANS </dev/tty; GIMP_ANS=${GIMP_ANS:-N}
+    echo "$GIMP_ANS" | grep -qi '^y' && INSTALL_GIMP="true"
+
+    printf "  Install Inkscape (vector graphics)?    (y/N)  ~${SIZE_INKSCAPE} MB: "
+    read -r INK_ANS </dev/tty; INK_ANS=${INK_ANS:-N}
+    echo "$INK_ANS" | grep -qi '^y' && INSTALL_INKSCAPE="true"
+
+    printf "  Install VLC media player?              (y/N)  ~${SIZE_VLC} MB: "
+    read -r VLC_ANS </dev/tty; VLC_ANS=${VLC_ANS:-N}
+    echo "$VLC_ANS" | grep -qi '^y' && INSTALL_VLC="true"
+    echo ""
+  else
+    INSTALL_PROOT="false"
+    echo -e "  ${GRAY}⟳ Skipping Linux Container${NC}\n"
+  fi
 
   # Dev stacks
   echo -e "${CYAN}━━ Developer Stacks ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
   echo ""
-  printf "  Install Python 3 + pip + virtualenv + uv? (Y/n): "
+  printf "  Install Python 3 + pip + virtualenv + uv?   ~${SIZE_PYTHON} MB (Y/n): "
   read -r PY_ANS </dev/tty
   PY_ANS=${PY_ANS:-Y}
   echo "$PY_ANS" | grep -qi '^y' && INSTALL_PYTHON="true"
 
-  printf "  Install Node.js LTS + TypeScript + ts-node? (Y/n): "
+  printf "  Install Node.js LTS + TypeScript + ts-node? ~${SIZE_NODE} MB (Y/n): "
   read -r NODE_ANS </dev/tty
   NODE_ANS=${NODE_ANS:-Y}
   echo "$NODE_ANS" | grep -qi '^y' && INSTALL_NODE="true"
@@ -347,22 +448,22 @@ select_options_prompt() {
   # Optional apps
   echo -e "${CYAN}━━ Optional Apps ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
   echo ""
-  printf "  Install VS Code (code-oss)? (Y/n): "
+  printf "  Install VS Code (code-oss)?                  ~${SIZE_VSCODE} MB (Y/n): "
   read -r VS_ANS </dev/tty
   VS_ANS=${VS_ANS:-Y}
   echo "$VS_ANS" | grep -qi '^y' && INSTALL_VSCODE="true"
 
-  printf "  Install Firefox? (Y/n): "
+  printf "  Install Firefox?                             ~${SIZE_FIREFOX} MB (Y/n): "
   read -r FF_ANS </dev/tty
   FF_ANS=${FF_ANS:-Y}
   echo "$FF_ANS" | grep -qi '^y' && INSTALL_FIREFOX="true"
 
-  printf "  Install Chromium? (y/N): "
+  printf "  Install Chromium?                            ~${SIZE_CHROMIUM} MB (y/N): "
   read -r CR_ANS </dev/tty
   CR_ANS=${CR_ANS:-N}
   echo "$CR_ANS" | grep -qi '^y' && INSTALL_CHROMIUM="true"
 
-  printf "  Install File Manager (Thunar/Dolphin/PCManFM)? (Y/n): "
+  printf "  Install File Manager (Thunar/Dolphin/PCManFM)? ~${SIZE_FILES} MB (Y/n): "
   read -r FM_ANS </dev/tty
   FM_ANS=${FM_ANS:-Y}
   echo "$FM_ANS" | grep -qi '^y' && INSTALL_FILEMANAGER="true"
@@ -372,7 +473,7 @@ select_options_prompt() {
   echo -e "${CYAN}━━ Remote Display (VNC) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
   echo ""
   echo -e "  VNC lets you view your desktop on a monitor or other device via WiFi/USB."
-  printf "  Install VNC server? (y/N): "
+  printf "  Install VNC server?  ~${SIZE_VNC} MB (y/N): "
   read -r VNC_ANS </dev/tty
   VNC_ANS=${VNC_ANS:-N}
   if echo "$VNC_ANS" | grep -qi '^y'; then
@@ -389,7 +490,7 @@ select_options_prompt() {
   # Wine
   echo -e "${CYAN}━━ Windows App Support ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
   echo ""
-  printf "  Install Wine/Hangover (run Windows x86_64 apps)? (y/N): "
+  printf "  Install Wine/Hangover (run Windows x86_64 apps)?  ~${SIZE_WINE} MB (y/N): "
   read -r WINE_ANS </dev/tty
   WINE_ANS=${WINE_ANS:-N}
   echo "$WINE_ANS" | grep -qi '^y' && INSTALL_WINE="true"
@@ -398,13 +499,20 @@ select_options_prompt() {
 
 # ── SELECTION: TUI (whiptail/dialog) ─────────────────────────────────
 select_options_tui() {
+  # Reset flags on re-entry (go-back support)
+  INSTALL_PYTHON="false"; INSTALL_NODE="false"
+  INSTALL_VSCODE="false"; INSTALL_FIREFOX="false"; INSTALL_CHROMIUM="false"
+  INSTALL_FILEMANAGER="false"; INSTALL_VNC="false"; INSTALL_WINE="false"
+  INSTALL_PROOT="true"; INSTALL_LIBREOFFICE="false"; INSTALL_GIMP="false"
+  INSTALL_INKSCAPE="false"; INSTALL_VLC="false"
+
   # Desktop Environment
   DE_INPUT=$($TUI_CMD --title "DroidStation — Desktop" \
-    --menu "Choose your Desktop Environment:" 16 65 4 \
-    "1" "XFCE4      — Fast, DeX-optimized (Recommended)" \
-    "2" "KDE Plasma — Full-featured, Windows-style" \
-    "3" "LXQt       — Ultra-lightweight" \
-    "4" "GNOME      — Modern, touch-friendly" \
+    --menu "Choose your Desktop Environment:" 16 72 4 \
+    "1" "XFCE4      — Fast, DeX-optimized (Recommended) ~${SIZE_XFCE4} MB" \
+    "2" "KDE Plasma — Full-featured, Windows-style       ~${SIZE_KDE} MB" \
+    "3" "LXQt       — Ultra-lightweight                  ~${SIZE_LXQT} MB" \
+    "4" "GNOME      — Modern, touch-friendly (heavy)     ~${SIZE_GNOME} MB" \
     3>&1 1>&2 2>&3) || DE_INPUT="1"
   DE_CHOICE="$DE_INPUT"
   case $DE_CHOICE in
@@ -414,36 +522,56 @@ select_options_tui() {
     4) DE_NAME="GNOME";;
   esac
 
-  # Proot distro
-  DISTRO_INPUT=$($TUI_CMD --title "DroidStation — Distro" \
-    --menu "Choose Linux distro (inside Proot container):" 12 60 3 \
-    "1" "Ubuntu 22.04  (Recommended)" \
-    "2" "Debian 12     (Minimal)" \
-    "3" "Kali Linux    (Security)" \
-    3>&1 1>&2 2>&3) || DISTRO_INPUT="1"
-  case $DISTRO_INPUT in
-    1) PROOT_DISTRO="ubuntu";         PROOT_LABEL="Ubuntu 22.04";;
-    2) PROOT_DISTRO="debian";         PROOT_LABEL="Debian 12";;
-    3) PROOT_DISTRO="kali-nethunter"; PROOT_LABEL="Kali Linux";;
-  esac
+  # Linux Container (Proot)
+  if $TUI_CMD --title "DroidStation — Linux Container" \
+      --yesno "Install a Linux Container (Proot)?\n\nRuns Ubuntu/Debian apps on Android with full GPU\nacceleration. Required for LibreOffice, GIMP, VLC etc.\n\nBase download: ~${SIZE_PROOT_BASE} MB" 14 60; then
+    INSTALL_PROOT="true"
+
+    DISTRO_INPUT=$($TUI_CMD --title "DroidStation — Container Distro" \
+      --menu "Choose Linux distro for the container:" 12 65 3 \
+      "1" "Ubuntu 22.04  — Best compatibility (Recommended)  ~600 MB" \
+      "2" "Debian 12     — Minimal, rock-stable              ~450 MB" \
+      "3" "Kali Linux    — Security & pentesting tools       ~1.2 GB" \
+      3>&1 1>&2 2>&3) || DISTRO_INPUT="1"
+    case $DISTRO_INPUT in
+      1) PROOT_DISTRO="ubuntu";         PROOT_LABEL="Ubuntu 22.04";;
+      2) PROOT_DISTRO="debian";         PROOT_LABEL="Debian 12";;
+      3) PROOT_DISTRO="kali-nethunter"; PROOT_LABEL="Kali Linux";;
+    esac
+
+    # Proot apps
+    PROOT_APP_CHOICES=$($TUI_CMD --title "DroidStation — Container Apps" \
+      --checklist "Select apps to install inside $PROOT_LABEL:" 14 72 4 \
+      "libreoffice" "LibreOffice — Office suite          ~${SIZE_LIBREOFFICE} MB" OFF \
+      "gimp"        "GIMP        — Image editor          ~${SIZE_GIMP} MB" OFF \
+      "inkscape"    "Inkscape    — Vector graphics       ~${SIZE_INKSCAPE} MB" OFF \
+      "vlc"         "VLC         — Media player          ~${SIZE_VLC} MB" OFF \
+      3>&1 1>&2 2>&3) || PROOT_APP_CHOICES=""
+    echo "$PROOT_APP_CHOICES" | grep -q "libreoffice" && INSTALL_LIBREOFFICE="true"
+    echo "$PROOT_APP_CHOICES" | grep -q "gimp"        && INSTALL_GIMP="true"
+    echo "$PROOT_APP_CHOICES" | grep -q "inkscape"    && INSTALL_INKSCAPE="true"
+    echo "$PROOT_APP_CHOICES" | grep -q "vlc"         && INSTALL_VLC="true"
+  else
+    INSTALL_PROOT="false"
+  fi
 
   # Dev stacks
   DEV_CHOICES=$($TUI_CMD --title "DroidStation — Dev Stacks" \
-    --checklist "Select developer tools to install:" 12 65 2 \
-    "python" "Python 3 + pip + virtualenv + uv" ON \
-    "node"   "Node.js LTS + TypeScript + ts-node" ON \
+    --checklist "Select developer tools to install:" 12 72 2 \
+    "python" "Python 3 + pip + virtualenv + uv   ~${SIZE_PYTHON} MB" ON \
+    "node"   "Node.js LTS + TypeScript + ts-node ~${SIZE_NODE} MB"  ON \
     3>&1 1>&2 2>&3) || DEV_CHOICES="python node"
   echo "$DEV_CHOICES" | grep -q "python" && INSTALL_PYTHON="true"
   echo "$DEV_CHOICES" | grep -q "node"   && INSTALL_NODE="true"
 
-  # Optional apps
+  # Optional apps + Wine
   EXTRA_CHOICES=$($TUI_CMD --title "DroidStation — Optional Apps" \
-    --checklist "Select apps to install:" 16 70 5 \
-    "vscode"  "VS Code (code-oss)"               ON \
-    "firefox" "Firefox Browser"                  ON \
-    "chromium" "Chromium Browser"                OFF \
-    "files"   "File Manager (Thunar/Dolphin/PCManFM)" ON \
-    "wine"    "Wine/Hangover (Windows x86_64 apps)"   OFF \
+    --checklist "Select apps to install:" 18 72 5 \
+    "vscode"  "VS Code (code-oss)                ~${SIZE_VSCODE} MB" ON \
+    "firefox" "Firefox Browser                   ~${SIZE_FIREFOX} MB" ON \
+    "chromium" "Chromium Browser                 ~${SIZE_CHROMIUM} MB" OFF \
+    "files"   "File Manager (Thunar/Dolphin/PCManFM) ~${SIZE_FILES} MB" ON \
+    "wine"    "Wine/Hangover (Windows apps)      ~${SIZE_WINE} MB"  OFF \
     3>&1 1>&2 2>&3) || EXTRA_CHOICES="vscode firefox files"
   echo "$EXTRA_CHOICES" | grep -q "vscode"   && INSTALL_VSCODE="true"
   echo "$EXTRA_CHOICES" | grep -q "firefox"  && INSTALL_FIREFOX="true"
@@ -453,7 +581,7 @@ select_options_tui() {
 
   # VNC
   if $TUI_CMD --title "DroidStation — VNC" \
-      --yesno "Install VNC server?\n(Remote/monitor display via WiFi or USB)" 9 55; then
+      --yesno "Install VNC server?  ~${SIZE_VNC} MB\n(Remote/monitor display via WiFi or USB)" 9 55; then
     INSTALL_VNC="true"
     VNC_PASS_IN=$($TUI_CMD --title "VNC Password" \
       --inputbox "Set a VNC password:" 8 45 "123456" 3>&1 1>&2 2>&3) && VNC_PASS="${VNC_PASS_IN:-123456}"
@@ -476,6 +604,98 @@ select_options() {
     *)
       select_options_prompt;;
   esac
+}
+
+# ── INSTALL SUMMARY + GO-BACK ────────────────────────────────────────
+show_install_summary() {
+  local total=$SIZE_CORE
+  local de_size items=""
+
+  case $DE_CHOICE in
+    2) de_size=$SIZE_KDE;;
+    3) de_size=$SIZE_LXQT;;
+    4) de_size=$SIZE_GNOME;;
+    *) de_size=$SIZE_XFCE4;;
+  esac
+  total=$((total + de_size))
+
+  if [ "$INSTALL_PROOT" = "true" ]; then
+    total=$((total + SIZE_PROOT_BASE))
+    [ "$INSTALL_LIBREOFFICE" = "true" ] && total=$((total + SIZE_LIBREOFFICE))
+    [ "$INSTALL_GIMP"        = "true" ] && total=$((total + SIZE_GIMP))
+    [ "$INSTALL_INKSCAPE"    = "true" ] && total=$((total + SIZE_INKSCAPE))
+    [ "$INSTALL_VLC"         = "true" ] && total=$((total + SIZE_VLC))
+  fi
+  [ "$INSTALL_PYTHON"  = "true" ] && total=$((total + SIZE_PYTHON))
+  [ "$INSTALL_NODE"    = "true" ] && total=$((total + SIZE_NODE))
+  [ "$INSTALL_VSCODE"  = "true" ] && total=$((total + SIZE_VSCODE))
+  [ "$INSTALL_FIREFOX" = "true" ] && total=$((total + SIZE_FIREFOX))
+  [ "$INSTALL_CHROMIUM"= "true" ] && total=$((total + SIZE_CHROMIUM))
+  [ "$INSTALL_FILEMANAGER" = "true" ] && total=$((total + SIZE_FILES))
+  [ "$INSTALL_VNC"     = "true" ] && total=$((total + SIZE_VNC))
+  [ "$INSTALL_WINE"    = "true" ] && total=$((total + SIZE_WINE))
+
+  echo ""
+  echo -e "${WHITE}╔══════════════════════════════════════════════════════════════╗${NC}"
+  echo -e "${WHITE}║           📦  Estimated Installation Size                   ║${NC}"
+  echo -e "${WHITE}╠══════════════════════════════════════════════════════════════╣${NC}"
+  printf "${WHITE}║${NC}  %-42s %8s MB  ${WHITE}║${NC}\n" "Core (X11, audio, GPU drivers)"   "$SIZE_CORE"
+  printf "${WHITE}║${NC}  %-42s %8s MB  ${WHITE}║${NC}\n" "Desktop: $DE_NAME"                "$de_size"
+  if [ "$INSTALL_PROOT" = "true" ]; then
+    printf "${WHITE}║${NC}  %-42s %8s MB  ${WHITE}║${NC}\n" "Linux Container: $PROOT_LABEL"  "$SIZE_PROOT_BASE"
+    [ "$INSTALL_LIBREOFFICE" = "true" ] && printf "${WHITE}║${NC}  %-42s %8s MB  ${WHITE}║${NC}\n" "  + LibreOffice" "$SIZE_LIBREOFFICE"
+    [ "$INSTALL_GIMP"        = "true" ] && printf "${WHITE}║${NC}  %-42s %8s MB  ${WHITE}║${NC}\n" "  + GIMP"        "$SIZE_GIMP"
+    [ "$INSTALL_INKSCAPE"    = "true" ] && printf "${WHITE}║${NC}  %-42s %8s MB  ${WHITE}║${NC}\n" "  + Inkscape"    "$SIZE_INKSCAPE"
+    [ "$INSTALL_VLC"         = "true" ] && printf "${WHITE}║${NC}  %-42s %8s MB  ${WHITE}║${NC}\n" "  + VLC"         "$SIZE_VLC"
+  else
+    printf "${WHITE}║${NC}  %-42s %11s  ${WHITE}║${NC}\n" "Linux Container" "skipped"
+  fi
+  [ "$INSTALL_PYTHON"  = "true" ] && printf "${WHITE}║${NC}  %-42s %8s MB  ${WHITE}║${NC}\n" "Dev: Python 3 + pip"   "$SIZE_PYTHON"
+  [ "$INSTALL_NODE"    = "true" ] && printf "${WHITE}║${NC}  %-42s %8s MB  ${WHITE}║${NC}\n" "Dev: Node.js LTS"      "$SIZE_NODE"
+  [ "$INSTALL_VSCODE"  = "true" ] && printf "${WHITE}║${NC}  %-42s %8s MB  ${WHITE}║${NC}\n" "App: VS Code"          "$SIZE_VSCODE"
+  [ "$INSTALL_FIREFOX" = "true" ] && printf "${WHITE}║${NC}  %-42s %8s MB  ${WHITE}║${NC}\n" "App: Firefox"          "$SIZE_FIREFOX"
+  [ "$INSTALL_CHROMIUM"= "true" ] && printf "${WHITE}║${NC}  %-42s %8s MB  ${WHITE}║${NC}\n" "App: Chromium"         "$SIZE_CHROMIUM"
+  [ "$INSTALL_FILEMANAGER" = "true" ] && printf "${WHITE}║${NC}  %-42s %8s MB  ${WHITE}║${NC}\n" "App: File Manager" "$SIZE_FILES"
+  [ "$INSTALL_VNC"     = "true" ] && printf "${WHITE}║${NC}  %-42s %8s MB  ${WHITE}║${NC}\n" "VNC Server"            "$SIZE_VNC"
+  [ "$INSTALL_WINE"    = "true" ] && printf "${WHITE}║${NC}  %-42s %8s MB  ${WHITE}║${NC}\n" "Wine/Hangover"         "$SIZE_WINE"
+  echo -e "${WHITE}╠══════════════════════════════════════════════════════════════╣${NC}"
+  printf "${WHITE}║${NC}  ${CYAN}%-42s %8s MB${NC}  ${WHITE}║${NC}\n" "Total estimate:" "$total"
+  echo -e "${WHITE}╚══════════════════════════════════════════════════════════════╝${NC}"
+  echo ""
+  echo -e "  ${WHITE}[1]${NC} Start installation"
+  echo -e "  ${WHITE}[2]${NC} Go back and change selections"
+  echo ""
+  printf "  Enter choice [default: 1]: "
+  read -r CONFIRM_CHOICE </dev/tty
+  CONFIRM_CHOICE=${CONFIRM_CHOICE:-1}
+  [ "$CONFIRM_CHOICE" = "2" ] && return 1
+  return 0
+}
+
+# ── USERNAME PROMPT (before install) ─────────────────────────────────
+prompt_proot_username() {
+  [ "$INSTALL_PROOT" != "true" ] && return
+  [ "$INSTALLER_MODE" = "flags" ] && return
+  echo -e "${CYAN}━━ Linux Container Username ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+  echo ""
+  printf "  Username for Linux container [default: droiduser]: "
+  read -r USER_INPUT </dev/tty
+  PROOT_USER="${USER_INPUT:-droiduser}"
+  echo -e "  ${GREEN}✓ Username: $PROOT_USER${NC}\n"
+}
+
+# ── DYNAMIC STEP COUNT ───────────────────────────────────────────────
+calculate_total_steps() {
+  # Always: update, repos, x11, desktop, gpu, audio, dev, extras, theme, launchers
+  TOTAL_STEPS=10
+  [ "$INSTALL_WINE"  = "true" ] && TOTAL_STEPS=$((TOTAL_STEPS + 1))
+  if [ "$INSTALL_PROOT" = "true" ]; then
+    TOTAL_STEPS=$((TOTAL_STEPS + 2))
+    { [ "$INSTALL_LIBREOFFICE" = "true" ] || [ "$INSTALL_GIMP"     = "true" ] || \
+      [ "$INSTALL_INKSCAPE"    = "true" ] || [ "$INSTALL_VLC"      = "true" ]; } && \
+      TOTAL_STEPS=$((TOTAL_STEPS + 1))
+  fi
+  [ "$INSTALL_VNC" = "true" ] && TOTAL_STEPS=$((TOTAL_STEPS + 1))
 }
 
 # ══════════════════════════════════════════════════════════════════════
@@ -612,12 +832,9 @@ step_extras() {
   pkg_install "imagemagick" "ImageMagick (wallpaper)"
 }
 
-# STEP 9 — Wine/Hangover (optional)
+# STEP — Wine/Hangover (optional, called only when selected)
 step_wine() {
   update_progress
-  if [ "$INSTALL_WINE" != "true" ]; then
-    echo -e "  ${GRAY}⟳ Skipping Wine/Hangover (not selected)${NC}"; return
-  fi
   echo -e "${PURPLE}[Step $CURRENT_STEP/$TOTAL_STEPS] Installing Wine/Hangover...${NC}\n"
   (yes | pkg remove wine-stable -y >> "$LOG_FILE" 2>&1) &
   spinner $! "Removing old Wine versions"
@@ -642,30 +859,31 @@ step_proot() {
   spinner $! "Installing $PROOT_LABEL"
 
   # Bootstrap base packages + GPU libs inside proot
-  proot-distro login "$PROOT_DISTRO" -- bash -c "
+  (proot-distro login "$PROOT_DISTRO" -- bash -c "
     export DEBIAN_FRONTEND=noninteractive
     apt-get update -y -q > /dev/null 2>&1
     apt-get install -y -q --no-install-recommends \
-      sudo curl wget git htop nano dbus-x11 \
+      sudo curl wget git htop nano dbus-x11 neofetch \
       mesa-utils libgl1-mesa-glx libvulkan1 \
       build-essential ca-certificates > /dev/null 2>&1
-  " 2>/dev/null || true
+  " >> "$LOG_FILE" 2>&1) &
+  spinner $! "Installing base packages in container"
 
-  # Create droiduser with passwordless sudo
+  # Create container user with passwordless sudo
   proot-distro login "$PROOT_DISTRO" -- bash -c "
-    id 'droiduser' > /dev/null 2>&1 || useradd -m -s /bin/bash droiduser
-    usermod -aG sudo droiduser 2>/dev/null || true
+    id '${PROOT_USER}' > /dev/null 2>&1 || useradd -m -s /bin/bash '${PROOT_USER}'
+    usermod -aG sudo '${PROOT_USER}' 2>/dev/null || true
     mkdir -p /etc/sudoers.d
     echo 'Defaults !requiretty' > /etc/sudoers.d/proot-compat
-    echo 'droiduser ALL=(ALL) NOPASSWD: ALL' >> /etc/sudoers.d/proot-compat
+    echo '${PROOT_USER} ALL=(ALL) NOPASSWD: ALL' >> /etc/sudoers.d/proot-compat
     chmod 0440 /etc/sudoers.d/proot-compat
     chmod u+s /usr/bin/sudo 2>/dev/null || true
-    echo 'export PS1=\"\[\033[01;32m\]droiduser@linux\[\033[00m\]:\[\033[01;34m\]\w\[\033[00m\]\$ \"' >> /home/droiduser/.bashrc
-    echo 'alias ll=\"ls -la\"' >> /home/droiduser/.bashrc
-    echo 'alias update=\"sudo apt update && sudo apt upgrade -y\"' >> /home/droiduser/.bashrc
+    echo 'export PS1=\"\[\033[01;32m\]${PROOT_USER}@linux\[\033[00m\]:\[\033[01;34m\]\w\[\033[00m\]\$ \"' >> /home/${PROOT_USER}/.bashrc
+    echo 'alias ll=\"ls -la\"' >> /home/${PROOT_USER}/.bashrc
+    echo 'alias update=\"sudo apt update && sudo apt upgrade -y\"' >> /home/${PROOT_USER}/.bashrc
   " 2>/dev/null || true
 
-  echo -e "  ${GREEN}✓ $PROOT_LABEL ready — user: droiduser (passwordless sudo)${NC}"
+  echo -e "  ${GREEN}✓ $PROOT_LABEL ready — user: $PROOT_USER (passwordless sudo)${NC}"
 }
 
 # STEP 11 — Proot App Bridge
@@ -699,7 +917,7 @@ proot-distro login "\$PROOT_DISTRO" \$BINDS -- bash -c "
   export TU_DEBUG=noconform
   export ZINK_DESCRIPTORS=lazy
   export XDG_DATA_DIRS=/usr/share:/usr/local/share
-  export PS1='\[\033[01;32m\]droiduser@linux\[\033[00m\]:\[\033[01;34m\]\w\[\033[00m\]\$ '
+  export PS1='\[\033[01;32m\]${PROOT_USER}@linux\[\033[00m\]:\[\033[01;34m\]\w\[\033[00m\]\$ '
   echo '  GPU: GALLIUM=zink  |  Type exit to leave proot'
   echo ''
   exec bash
@@ -790,6 +1008,26 @@ SYNCEOF
   chmod +x ~/proot-menu-sync.sh
   echo -e "  ${GREEN}✓ Created ~/proot-menu-sync.sh${NC}"
   bash ~/proot-menu-sync.sh "$PROOT_DISTRO" 2>/dev/null || true
+}
+
+# STEP — Container apps (optional, called only when selected)
+step_proot_apps() {
+  update_progress
+  echo -e "${PURPLE}[Step $CURRENT_STEP/$TOTAL_STEPS] Installing apps in Linux container...${NC}\n"
+  local pkgs=""
+  [ "$INSTALL_LIBREOFFICE" = "true" ] && pkgs="$pkgs libreoffice"
+  [ "$INSTALL_GIMP"        = "true" ] && pkgs="$pkgs gimp"
+  [ "$INSTALL_INKSCAPE"    = "true" ] && pkgs="$pkgs inkscape"
+  [ "$INSTALL_VLC"         = "true" ] && pkgs="$pkgs vlc"
+  pkgs="${pkgs# }"
+
+  (proot-distro login "$PROOT_DISTRO" -- bash -c "
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update -y -q > /dev/null 2>&1
+    apt-get install -y -q --no-install-recommends $pkgs > /dev/null 2>&1
+  " >> "$LOG_FILE" 2>&1) &
+  spinner $! "Installing container apps: $pkgs"
+  echo -e "  ${GREEN}✓ Container apps installed ($pkgs)${NC}"
 }
 
 # STEP 12 — Dark theme + wallpaper
@@ -978,12 +1216,9 @@ EOF
   echo -e "  ${GREEN}✓ Dark theme configured: Adwaita-dark + Dracula terminal${NC}"
 }
 
-# STEP 13 — VNC (optional)
+# STEP — VNC (optional, called only when selected)
 step_vnc() {
   update_progress
-  if [ "$INSTALL_VNC" != "true" ]; then
-    echo -e "  ${GRAY}⟳ Skipping VNC (not selected)${NC}"; return
-  fi
   echo -e "${PURPLE}[Step $CURRENT_STEP/$TOTAL_STEPS] Installing VNC server...${NC}\n"
   pkg_install "tigervnc" "TigerVNC Server"
   mkdir -p ~/.vnc
@@ -1198,16 +1433,6 @@ Type=Application
 Categories=System;TerminalEmulator;
 EOF2
 
-  cat > ~/Desktop/LinuxContainer.desktop << EOF3
-[Desktop Entry]
-Name=Linux Container ($PROOT_LABEL)
-Comment=Open Proot shell with GPU passthrough
-Exec=$TERM_CMD -e "bash /root/start-proot.sh"
-Icon=system-run
-Type=Application
-Terminal=false
-EOF3
-
   [ "$INSTALL_WINE" = "true" ] && cat > ~/Desktop/WineConfig.desktop << 'EOF'
 [Desktop Entry]
 Name=Wine Config
@@ -1245,7 +1470,7 @@ DONE
 
   echo -e "${YELLOW}  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
   echo -e "${WHITE}  Desktop   :${NC} ${CYAN}$DE_NAME${NC}"
-  echo -e "${WHITE}  Distro    :${NC} ${CYAN}$PROOT_LABEL${NC}"
+  [ "$INSTALL_PROOT" = "true" ] && echo -e "${WHITE}  Container :${NC} ${CYAN}$PROOT_LABEL${NC}"
   echo -e "${WHITE}  GPU Mode  :${NC} ${CYAN}$GPU_DRIVER${NC}"
   [ "$DEX_MODE"       = "true" ]  && echo -e "${WHITE}  Samsung DeX:${NC} ${CYAN}Optimized ✓${NC}"
   [ "$INSTALL_PYTHON" = "true" ]  && echo -e "${WHITE}  Dev        :${NC} ${CYAN}Python 3 + pip + virtualenv + uv${NC}"
@@ -1260,12 +1485,14 @@ DONE
   echo -e "${WHITE}  🛑 STOP DESKTOP:${NC}"
   echo -e "       ${GREEN}stopdesk${NC}"
   echo ""
-  echo -e "${WHITE}  🐧 OPEN LINUX CONTAINER ($PROOT_LABEL):${NC}"
-  echo -e "       ${GREEN}bash ~/start-proot.sh${NC}"
-  echo ""
-  echo -e "${WHITE}  🔄 SYNC PROOT APPS TO DESKTOP MENU:${NC}"
-  echo -e "       ${GREEN}bash ~/proot-menu-sync.sh${NC}"
-  echo -e "       ${GRAY}(run after 'apt install <app>' inside proot)${NC}"
+  if [ "$INSTALL_PROOT" = "true" ]; then
+    echo -e "${WHITE}  🐧 OPEN LINUX CONTAINER ($PROOT_LABEL):${NC}"
+    echo -e "       ${GREEN}bash ~/start-proot.sh${NC}"
+    echo ""
+    echo -e "${WHITE}  🔄 SYNC PROOT APPS TO DESKTOP MENU:${NC}"
+    echo -e "       ${GREEN}bash ~/proot-menu-sync.sh${NC}"
+    echo -e "       ${GRAY}(run after 'apt install <app>' inside proot)${NC}"
+  fi
   [ "$INSTALL_VNC" = "true" ] && {
     echo ""
     echo -e "${WHITE}  📺 VNC REMOTE DESKTOP:${NC}"
@@ -1303,33 +1530,35 @@ main() {
   fi
 
   detect_device
-  select_options
+  check_system_resources
 
-  # Print summary before installing
-  echo -e "${WHITE}  ━━━ Summary ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-  echo -e "  DE: ${CYAN}$DE_NAME${NC}  |  Distro: ${CYAN}$PROOT_LABEL${NC}  |  GPU: ${CYAN}$GPU_DRIVER${NC}"
-  [ "$INSTALL_PYTHON" = "true" ] && echo -e "  Dev: Python"
-  [ "$INSTALL_NODE"   = "true" ] && echo -e "  Dev: Node.js + TypeScript"
-  [ "$INSTALL_VNC"    = "true" ] && echo -e "  VNC: enabled"
-  [ "$INSTALL_WINE"   = "true" ] && echo -e "  Wine: enabled"
-  echo -e "${WHITE}  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-  echo ""
-  sleep 2
+  while true; do
+    select_options
+    [ "$INSTALLER_MODE" = "flags" ] && break
+    show_install_summary && break
+  done
 
-  step_update         # 1
-  step_repos          # 2
-  step_x11            # 3
-  step_desktop        # 4
-  step_gpu            # 5
-  step_audio          # 6
-  step_dev            # 7
-  step_extras         # 8
-  step_wine           # 9
-  step_proot          # 10
-  step_proot_bridge   # 11
-  step_theme          # 12
-  step_vnc            # 13
-  step_launchers      # 14
+  prompt_proot_username
+  calculate_total_steps
+
+  step_update
+  step_repos
+  step_x11
+  step_desktop
+  step_gpu
+  step_audio
+  step_dev
+  step_extras
+  [ "$INSTALL_WINE" = "true" ] && step_wine
+  if [ "$INSTALL_PROOT" = "true" ]; then
+    step_proot
+    step_proot_bridge
+    { [ "$INSTALL_LIBREOFFICE" = "true" ] || [ "$INSTALL_GIMP"     = "true" ] || \
+      [ "$INSTALL_INKSCAPE"    = "true" ] || [ "$INSTALL_VLC"      = "true" ]; } && step_proot_apps
+  fi
+  step_theme
+  [ "$INSTALL_VNC" = "true" ] && step_vnc
+  step_launchers
 
   show_completion
 }
