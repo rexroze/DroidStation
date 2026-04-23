@@ -13,12 +13,13 @@ Connect to a monitor via Samsung DeX or USB-C and it becomes a Linux PC. Unplug 
 | Category | Details |
 |---|---|
 | **Desktops** | XFCE4, KDE Plasma, LXQt, GNOME |
-| **Distros** | Ubuntu 22.04, Debian 12, Kali Linux (via Proot) |
+| **Linux Container** | Ubuntu 22.04, Debian 12, Kali Linux (via Proot — optional) |
 | **GPU** | Turnip/Zink (Adreno) · LLVMpipe fallback (Mali/other) |
 | **Audio** | PulseAudio |
-| **Dev — Python** | Python 3 + pip + virtualenv + uv + flask + ruff |
-| **Dev — Node.js** | Node.js LTS + TypeScript + ts-node + nodemon |
+| **Dev — Python** | Python 3 + pip + virtualenv + uv + flask + ruff (optional) |
+| **Dev — Node.js** | Node.js LTS + TypeScript + ts-node + nodemon (optional) |
 | **Extras** | VS Code, Firefox, Chromium, File Manager (all optional) |
+| **Container Apps** | LibreOffice, GIMP, Inkscape, VLC — installed inside Ubuntu (optional) |
 | **Proot Bridge** | Apps installed inside Proot appear in your desktop menu |
 | **VNC** | TigerVNC remote display over WiFi or USB (optional) |
 | **Wine** | Hangover + Box64 — run Windows x86\_64 apps (optional) |
@@ -34,7 +35,7 @@ Connect to a monitor via Samsung DeX or USB-C and it becomes a Linux PC. Unplug 
 | **Android 10+** | ARM64 device |
 | **Termux** | Install from [F-Droid](https://f-droid.org/en/packages/com.termux/) — **not** the Play Store version |
 | **Termux-X11** | Download the latest APK from [GitHub Releases](https://github.com/termux/termux-x11/releases) |
-| **Storage** | ~4–6 GB free (more if you choose Kali or install extras) |
+| **Storage** | ~2 GB minimum (desktop only) · ~4–6 GB with Linux container + extras |
 | **RAM** | 4 GB minimum · 6 GB+ recommended for KDE/GNOME |
 
 > **Samsung DeX users:** No extra setup needed. DroidStation auto-detects DeX and applies a 1920×1080 resolution on launch.
@@ -63,44 +64,85 @@ bash droidstation-setup.sh
 
 ---
 
-## Installer Modes
+## Installer
 
-DroidStation auto-detects the best installer for your environment.
+### How it works
 
-### 1 · Interactive prompts (default)
-Just run the script with no arguments. You'll be walked through every choice with numbered menus.
+When you run the installer, it:
+
+1. Shows your available **storage and RAM** with a color-coded warning if space is tight
+2. Walks you through every option with **estimated download sizes** next to each choice
+3. Displays a **full size breakdown** before anything downloads — you can go back and change selections if the total is too large
+4. Installs only what you chose, with a **live progress bar** showing the current step, percentage, and task
+
+### Installer modes
+
+DroidStation auto-detects the best mode for your environment.
+
+#### Interactive prompts (default)
+Just run the script with no arguments. You'll be walked through every choice with numbered menus and size estimates.
 
 ```bash
 bash droidstation-setup.sh
 ```
 
-### 2 · TUI menus
-If `dialog` or `whiptail` is installed, a graphical menu is shown automatically.
+#### TUI menus
+If `dialog` or `whiptail` is installed, a graphical checklist menu is shown automatically.
 
 ```bash
 pkg install dialog
 bash droidstation-setup.sh
 ```
 
-### 3 · One-liner flags
+#### One-liner flags
 Skip all prompts by passing everything as flags. Ideal for re-installs or automation.
 
 ```bash
-bash droidstation-setup.sh --de=xfce --distro=ubuntu --dev=python,node --extras=vscode,firefox --vnc --wine
+bash droidstation-setup.sh --de=xfce --distro=ubuntu --dev=python,node \
+  --extras=vscode,firefox,libreoffice,gimp --wine
 ```
 
-**Available flags:**
+### Available flags
 
 | Flag | Values | Description |
 |---|---|---|
 | `--de=` | `xfce` `kde` `lxqt` `gnome` | Desktop environment |
 | `--distro=` | `ubuntu` `debian` `kali` | Proot Linux distro |
 | `--dev=` | `python` `node` (comma-separated) | Dev stacks |
-| `--extras=` | `vscode` `firefox` `chromium` `files` | Optional apps |
+| `--extras=` | `vscode` `firefox` `chromium` `files` `libreoffice` `gimp` `inkscape` `vlc` | Optional apps |
 | `--vnc` | — | Install TigerVNC server |
 | `--wine` | — | Install Wine/Hangover |
-| `--no-proot` | — | Skip Proot container |
+| `--no-proot` | — | Skip Linux container entirely (saves ~800 MB) |
+| `--user=` | any username | Container username (default: `droiduser`) |
 | `--help` | — | Show help |
+
+---
+
+## Estimated Install Sizes
+
+These are approximate. Actual sizes depend on your device and cached packages.
+
+| Component | Est. Size |
+|---|---|
+| Core (X11, audio, GPU drivers) | ~300 MB |
+| XFCE4 | ~400 MB |
+| KDE Plasma | ~900 MB |
+| LXQt | ~200 MB |
+| GNOME | ~700 MB |
+| Linux Container base (Ubuntu/Debian) | ~800 MB |
+| Kali Linux container | ~1.2 GB |
+| Python 3 + pip + libs | ~100 MB |
+| Node.js LTS | ~150 MB |
+| VS Code | ~220 MB |
+| Firefox | ~260 MB |
+| Chromium | ~310 MB |
+| Wine/Hangover | ~600 MB |
+| LibreOffice (in container) | ~700 MB |
+| GIMP (in container) | ~350 MB |
+| Inkscape (in container) | ~250 MB |
+| VLC (in container) | ~120 MB |
+
+The installer shows a total estimate and lets you go back to adjust selections before anything downloads.
 
 ---
 
@@ -129,31 +171,51 @@ stopdesk
 |---|---|
 | `startdesk` | Start your Linux desktop (X11) |
 | `stopdesk` | Stop all desktop sessions |
-| `bash ~/start-proot.sh` | Open the Proot Linux shell |
-| `bash ~/proot-menu-sync.sh` | Sync Proot apps into desktop menu |
+| `bash ~/start-proot.sh` | Open the Linux container shell |
+| `bash ~/proot-menu-sync.sh` | Sync container apps into desktop menu |
 | `bash ~/start-vnc.sh` | Start VNC remote desktop (if installed) |
 
 ---
 
-## Proot Linux Container
+## Linux Container
 
-The Proot container gives you a full standard Linux environment (Ubuntu/Debian/Kali) where `apt` works normally. Install anything you can't get from Termux's repositories.
+The Proot container gives you a full standard Linux environment (Ubuntu/Debian/Kali) where `apt` works normally. It's **optional** — you can skip it during setup to save ~800 MB.
 
 ```bash
 # Enter the container
 bash ~/start-proot.sh
 
-# Inside proot — install anything
-sudo apt install blender wireshark libreoffice gimp
+# Inside the container — install anything
+sudo apt install blender wireshark
 
-# Exit proot
+# Exit the container
 exit
 
 # Sync newly installed apps to your desktop menu
 bash ~/proot-menu-sync.sh
 ```
 
-Apps installed this way appear in your XFCE/KDE application menu with a `[P]` prefix. They launch with full GPU passthrough and X11 display sharing — no extra configuration needed.
+Apps installed inside the container appear in your XFCE/KDE application menu with a `[P]` prefix. They launch with full GPU passthrough and X11 display sharing — no extra configuration needed.
+
+### Optional container apps
+
+During setup you can choose to install these directly into the container:
+
+| App | What It Is | Est. Size |
+|---|---|---|
+| **LibreOffice** | Full office suite (Writer, Calc, Impress) | ~700 MB |
+| **GIMP** | Image editor — Photoshop alternative | ~350 MB |
+| **Inkscape** | Vector graphics editor — Illustrator alternative | ~250 MB |
+| **VLC** | Universal media player | ~120 MB |
+
+You can also install them manually anytime:
+
+```bash
+bash ~/start-proot.sh
+sudo apt install libreoffice gimp inkscape vlc
+exit
+bash ~/proot-menu-sync.sh
+```
 
 ---
 
@@ -240,9 +302,6 @@ winecfg
 
 # Run a Windows app
 wine yourapp.exe
-
-# Open Windows file explorer
-wine winefile
 ```
 
 > Performance varies by app. Simple utilities run well. Heavier apps may be slow.
@@ -290,8 +349,8 @@ Disable Child Process restrictions in Developer Options (see Samsung DeX Tips ab
 **GPU acceleration not working**
 Run `glxinfo | grep renderer` inside a terminal on the desktop. If it shows `llvmpipe`, your GPU isn't supported by Turnip. This is expected on Exynos/Mali devices.
 
-**Proot apps not showing in menu**
-Run `bash ~/proot-menu-sync.sh` after installing apps inside proot.
+**Container apps not showing in menu**
+Run `bash ~/proot-menu-sync.sh` after installing apps inside the container.
 
 **Audio not working**
 Inside the desktop terminal, run:
@@ -322,15 +381,16 @@ After installation, the following are created in your home directory:
 ~/
 ├── startdesk.sh            # Start desktop (also symlinked as global 'startdesk')
 ├── stopdesk.sh             # Stop desktop  (also symlinked as global 'stopdesk')
-├── start-proot.sh          # Open Proot Linux shell
-├── proot-menu-sync.sh      # Sync Proot apps to desktop menu
+├── start-proot.sh          # Open Linux container shell (if installed)
+├── proot-menu-sync.sh      # Sync container apps to desktop menu (if installed)
 ├── start-vnc.sh            # Start VNC (if installed)
 ├── Desktop/                # Desktop shortcuts
-│   ├── Firefox.desktop
-│   ├── VSCode.desktop
 │   ├── Terminal.desktop
-│   ├── LinuxContainer.desktop
-│   └── ...
+│   ├── Firefox.desktop     # (if installed)
+│   ├── Chromium.desktop    # (if installed)
+│   ├── VSCode.desktop      # (if installed)
+│   ├── WineConfig.desktop  # (if Wine installed)
+│   └── WineExplorer.desktop
 ├── droidstation-install.log
 └── .config/
     ├── droidstation-gpu.sh          # GPU environment vars (auto-sourced)
