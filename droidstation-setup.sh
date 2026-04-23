@@ -37,7 +37,7 @@
 # ══════════════════════════════════════════════════════════════════════
 
 # ── GLOBAL CONFIG ────────────────────────────────────────────────────
-SCRIPT_VERSION="1.0"
+SCRIPT_VERSION="1.1.0"
 TOTAL_STEPS=10   # recalculated after selections
 CURRENT_STEP=0
 LOG_FILE="$HOME/droidstation-install.log"
