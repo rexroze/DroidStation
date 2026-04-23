@@ -8,6 +8,29 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [1.1.0] — 2026-04-23
+
+### Added
+- **Size estimates** — every menu option now shows its approximate download/install size
+- **Installation size summary** — full breakdown table shown before anything downloads, with a "Go back and change selections" option so users can adjust before committing
+- **Optional Linux container** — proot/Ubuntu is now opt-in during setup; skipping it saves ~800 MB
+- **Container apps** — LibreOffice, GIMP, Inkscape, and VLC can be installed directly into the Ubuntu container during setup (appear in desktop menu via Proot Bridge)
+- **System resource check** — installer shows free storage and RAM with color-coded warnings before the option menus
+- **Dynamic step count** — `TOTAL_STEPS` is calculated after selections so the progress bar percentage is always accurate
+- **`--user=<name>` flag** — set a custom username for the Linux container (default: `droiduser`)
+- **`--extras=libreoffice,gimp,inkscape,vlc` flag** — install container apps non-interactively
+- **`--no-proot` flag** — documented and exposed in all installer modes, not just flags mode
+
+### Changed
+- **Spinner fixed** — replaced `\r` carriage-return with ANSI `\033[1A\033[2K` (cursor-up + erase-line); the "Installing X" line now overwrites itself correctly in Termux mobile terminals instead of flooding the screen with repeated lines
+- **Wine, VNC, proot steps** are now skipped entirely (not just no-ops) when not selected, keeping the progress bar accurate
+- Storage requirement updated: ~2 GB minimum without container, ~4–6 GB with container + extras
+
+### Removed
+- **Linux Container desktop shortcut** (`LinuxContainer.desktop`) — it opened a raw shell window with no context; users can still open the container with `bash ~/start-proot.sh` from any terminal
+
+---
+
 ## [1.0.0] — 2026-04-22
 
 ### Added
