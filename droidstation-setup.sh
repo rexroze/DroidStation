@@ -41,6 +41,12 @@ SCRIPT_VERSION="1.1.0"
 TOTAL_STEPS=10   # recalculated after selections
 CURRENT_STEP=0
 LOG_FILE="$HOME/droidstation-install.log"
+CONFIG_DIR="$HOME/.config/droidstation"
+CONFIG_FILE="$CONFIG_DIR/config.env"
+COMMAND="install"
+DRY_RUN="false"
+DEVICE_FREE_MB=0
+DEVICE_RAM_MB=0
 
 # Default selections
 DE_CHOICE="1"
@@ -95,6 +101,7 @@ show_help() {
   echo "DroidStation v${SCRIPT_VERSION} — Full Linux Desktop for Android"
   echo ""
   echo "Usage: bash droidstation-setup.sh [OPTIONS]"
+  echo "       bash droidstation-setup.sh <install|dry-run|doctor> [OPTIONS]"
   echo ""
   echo "Options:"
   echo "  --de=<xfce|kde|lxqt|gnome>                          Desktop environment"
@@ -106,11 +113,15 @@ show_help() {
   echo "  --wine                                               Install Wine/Hangover"
   echo "  --no-proot                                           Skip Proot container"
   echo "  --user=<username>                                    Container username (default: droiduser)"
+  echo "  --dry-run                                            Show plan without installing"
   echo "  --help                                               Show this help"
   echo ""
   echo "Examples:"
   echo "  # Full setup with flags:"
   echo "  bash droidstation-setup.sh --de=xfce --distro=ubuntu --dev=python,node --extras=vscode,firefox,libreoffice"
+  echo ""
+  echo "  # Preview a lightweight setup without changing anything:"
+  echo "  bash droidstation-setup.sh dry-run --de=xfce --no-proot --extras=firefox"
   echo ""
   echo "  # Skip the Linux container (saves ~800 MB):"
   echo "  bash droidstation-setup.sh --no-proot"
@@ -128,6 +139,12 @@ parse_flags() {
   FLAG_USED="false"
   for arg in "$@"; do
     case "$arg" in
+      install)
+        COMMAND="install";;
+      dry-run|--dry-run)
+        COMMAND="dry-run"; DRY_RUN="true"; FLAG_USED="true";;
+      doctor)
+        COMMAND="doctor";;
       --help|-h)
         show_help; exit 0;;
       --de=*)
@@ -153,29 +170,107 @@ parse_flags() {
         FLAG_USED="true"
         IFS=',' read -ra devs <<< "${arg#*=}"
         for d in "${devs[@]}"; do
-          [ "$d" = "python" ] && INSTALL_PYTHON="true"
-          { [ "$d" = "node" ] || [ "$d" = "nodejs" ]; } && INSTALL_NODE="true"
+          case "$d" in
+            python) INSTALL_PYTHON="true";;
+            node|nodejs) INSTALL_NODE="true";;
+            "") ;;
+            *) echo "Unknown dev stack '$d'. Use: python,node"; exit 1;;
+          esac
         done;;
       --extras=*)
         FLAG_USED="true"
         IFS=',' read -ra extras <<< "${arg#*=}"
         for e in "${extras[@]}"; do
-          [ "$e" = "vscode" ]                          && INSTALL_VSCODE="true"
-          [ "$e" = "firefox" ]                         && INSTALL_FIREFOX="true"
-          [ "$e" = "chromium" ]                        && INSTALL_CHROMIUM="true"
-          { [ "$e" = "files" ] || [ "$e" = "filemanager" ]; } && INSTALL_FILEMANAGER="true"
-          [ "$e" = "libreoffice" ]                     && INSTALL_LIBREOFFICE="true"
-          [ "$e" = "gimp" ]                            && INSTALL_GIMP="true"
-          [ "$e" = "inkscape" ]                        && INSTALL_INKSCAPE="true"
-          [ "$e" = "vlc" ]                             && INSTALL_VLC="true"
+          case "$e" in
+            vscode) INSTALL_VSCODE="true";;
+            firefox) INSTALL_FIREFOX="true";;
+            chromium) INSTALL_CHROMIUM="true";;
+            files|filemanager) INSTALL_FILEMANAGER="true";;
+            libreoffice) INSTALL_LIBREOFFICE="true";;
+            gimp) INSTALL_GIMP="true";;
+            inkscape) INSTALL_INKSCAPE="true";;
+            vlc) INSTALL_VLC="true";;
+            "") ;;
+            *) echo "Unknown extra '$e'. Use: vscode,firefox,chromium,files,libreoffice,gimp,inkscape,vlc"; exit 1;;
+          esac
         done;;
       --vnc)      FLAG_USED="true"; INSTALL_VNC="true";;
       --wine)     FLAG_USED="true"; INSTALL_WINE="true";;
       --no-proot) FLAG_USED="true"; INSTALL_PROOT="false";;
       --user=*)   FLAG_USED="true"; PROOT_USER="${arg#*=}";;
+      --*) echo "Unknown option '$arg'. Run --help for usage."; exit 1;;
+      *) echo "Unknown command '$arg'. Use: install, dry-run, or doctor."; exit 1;;
     esac
   done
   [ "$FLAG_USED" = "true" ] && INSTALLER_MODE="flags"
+}
+
+validate_options() {
+  if ! echo "$PROOT_USER" | grep -qE '^[a-z_][a-z0-9_-]{0,31}$'; then
+    echo "Invalid username '$PROOT_USER'. Use lowercase letters, numbers, _ or -, starting with a letter or underscore."
+    exit 1
+  fi
+
+  if [ "$INSTALL_PROOT" != "true" ] && { [ "$INSTALL_LIBREOFFICE" = "true" ] || [ "$INSTALL_GIMP" = "true" ] || [ "$INSTALL_INKSCAPE" = "true" ] || [ "$INSTALL_VLC" = "true" ]; }; then
+    echo "Container apps require Proot. Remove libreoffice/gimp/inkscape/vlc extras or omit --no-proot."
+    exit 1
+  fi
+
+  if [ "$GPU_DRIVER" = "swrast" ] && { [ "$DE_CHOICE" = "2" ] || [ "$DE_CHOICE" = "4" ] || [ "$INSTALL_WINE" = "true" ]; }; then
+    echo -e "\n  ${YELLOW}Warning: software rendering detected. KDE/GNOME/Wine may be slow; XFCE or LXQt is safer.${NC}\n"
+  fi
+}
+
+estimate_total_mb() {
+  local total=$SIZE_CORE de_size
+  case $DE_CHOICE in
+    2) de_size=$SIZE_KDE;;
+    3) de_size=$SIZE_LXQT;;
+    4) de_size=$SIZE_GNOME;;
+    *) de_size=$SIZE_XFCE4;;
+  esac
+  total=$((total + de_size))
+  if [ "$INSTALL_PROOT" = "true" ]; then
+    total=$((total + SIZE_PROOT_BASE))
+    [ "$INSTALL_LIBREOFFICE" = "true" ] && total=$((total + SIZE_LIBREOFFICE))
+    [ "$INSTALL_GIMP" = "true" ] && total=$((total + SIZE_GIMP))
+    [ "$INSTALL_INKSCAPE" = "true" ] && total=$((total + SIZE_INKSCAPE))
+    [ "$INSTALL_VLC" = "true" ] && total=$((total + SIZE_VLC))
+  fi
+  [ "$INSTALL_PYTHON" = "true" ] && total=$((total + SIZE_PYTHON))
+  [ "$INSTALL_NODE" = "true" ] && total=$((total + SIZE_NODE))
+  [ "$INSTALL_VSCODE" = "true" ] && total=$((total + SIZE_VSCODE))
+  [ "$INSTALL_FIREFOX" = "true" ] && total=$((total + SIZE_FIREFOX))
+  [ "$INSTALL_CHROMIUM" = "true" ] && total=$((total + SIZE_CHROMIUM))
+  [ "$INSTALL_FILEMANAGER" = "true" ] && total=$((total + SIZE_FILES))
+  [ "$INSTALL_VNC" = "true" ] && total=$((total + SIZE_VNC))
+  [ "$INSTALL_WINE" = "true" ] && total=$((total + SIZE_WINE))
+  echo "$total"
+}
+
+save_config() {
+  mkdir -p "$CONFIG_DIR"
+  cat > "$CONFIG_FILE" << EOF
+# DroidStation generated config
+SCRIPT_VERSION="$SCRIPT_VERSION"
+DE_CHOICE="$DE_CHOICE"
+DE_NAME="$DE_NAME"
+PROOT_DISTRO="$PROOT_DISTRO"
+PROOT_LABEL="$PROOT_LABEL"
+PROOT_USER="$PROOT_USER"
+GPU_DRIVER="$GPU_DRIVER"
+DEX_MODE="$DEX_MODE"
+INSTALL_PROOT="$INSTALL_PROOT"
+INSTALL_PYTHON="$INSTALL_PYTHON"
+INSTALL_NODE="$INSTALL_NODE"
+INSTALL_VSCODE="$INSTALL_VSCODE"
+INSTALL_FIREFOX="$INSTALL_FIREFOX"
+INSTALL_CHROMIUM="$INSTALL_CHROMIUM"
+INSTALL_FILEMANAGER="$INSTALL_FILEMANAGER"
+INSTALL_VNC="$INSTALL_VNC"
+INSTALL_WINE="$INSTALL_WINE"
+VNC_GEOMETRY="$VNC_GEOMETRY"
+EOF
 }
 
 # ── INSTALLER MODE DETECTION ─────────────────────────────────────────
@@ -200,6 +295,8 @@ check_system_resources() {
   free_mb=${free_mb:-0}
   ram_mb=$(free -m 2>/dev/null | awk '/^Mem:/{print $2}')
   ram_mb=${ram_mb:-0}
+  DEVICE_FREE_MB="$free_mb"
+  DEVICE_RAM_MB="$ram_mb"
 
   [ "$free_mb" -ge 4000 ] && stor_color="$GREEN" || { [ "$free_mb" -ge 2000 ] && stor_color="$YELLOW" || stor_color="$RED"; }
   [ "$ram_mb"  -ge 4000 ] && ram_color="$GREEN"  || { [ "$ram_mb"  -ge 2500 ] && ram_color="$YELLOW"  || ram_color="$RED";  }
@@ -214,6 +311,49 @@ check_system_resources() {
     echo -e "\n  ${YELLOW}💡 Storage is tight — consider skipping proot or large apps.${NC}"
   fi
   echo ""
+}
+
+doctor_check() {
+  local label="$1" status="$2" detail="$3" color="$GREEN"
+  [ "$status" = "WARN" ] && color="$YELLOW"
+  [ "$status" = "FAIL" ] && color="$RED"
+  printf "  ${WHITE}%-22s${NC} ${color}%-5s${NC} %s\n" "$label" "$status" "$detail"
+}
+
+run_doctor() {
+  show_banner
+  detect_device
+  check_system_resources
+  echo -e "${CYAN}DroidStation Doctor${NC}"
+  echo ""
+
+  command -v termux-info >/dev/null 2>&1 \
+    && doctor_check "Termux" "OK" "termux-info available" \
+    || doctor_check "Termux" "WARN" "termux-info not found"
+  [ -n "$PREFIX" ] \
+    && doctor_check "PREFIX" "OK" "$PREFIX" \
+    || doctor_check "PREFIX" "FAIL" "PREFIX is not set; run inside Termux"
+  command -v pkg >/dev/null 2>&1 \
+    && doctor_check "Package manager" "OK" "pkg available" \
+    || doctor_check "Package manager" "FAIL" "pkg command missing"
+  command -v termux-x11 >/dev/null 2>&1 \
+    && doctor_check "Termux-X11" "OK" "termux-x11 command installed" \
+    || doctor_check "Termux-X11" "WARN" "install termux-x11-nightly and the Android APK"
+  command -v pulseaudio >/dev/null 2>&1 \
+    && doctor_check "Audio" "OK" "PulseAudio installed" \
+    || doctor_check "Audio" "WARN" "PulseAudio not installed yet"
+  command -v proot-distro >/dev/null 2>&1 \
+    && doctor_check "Proot" "OK" "proot-distro available" \
+    || doctor_check "Proot" "WARN" "Proot optional package not installed"
+  [ "$DEVICE_FREE_MB" -ge 4000 ] \
+    && doctor_check "Storage" "OK" "${DEVICE_FREE_MB} MB free" \
+    || doctor_check "Storage" "WARN" "${DEVICE_FREE_MB} MB free; keep the install minimal"
+  [ "$DEVICE_RAM_MB" -ge 4000 ] \
+    && doctor_check "RAM" "OK" "${DEVICE_RAM_MB} MB total" \
+    || doctor_check "RAM" "WARN" "${DEVICE_RAM_MB} MB total; prefer XFCE or LXQt"
+
+  echo ""
+  echo -e "${GRAY}Doctor only checks the current Termux environment; it does not install anything.${NC}"
 }
 
 # ── PROGRESS BAR ─────────────────────────────────────────────────────
@@ -277,7 +417,7 @@ show_banner() {
   ║   ██║  ██║██╔══██╗██║   ██║██║██║  ██║            ║
   ║   ██████╔╝██║  ██║╚██████╔╝██║██████╔╝            ║
   ║   ╚═════╝ ╚═╝  ╚═╝ ╚═════╝ ╚═╝╚═════╝             ║
-  ║            S T A T I O N   v1.0                    ║
+  ║            S T A T I O N   v1.1.0                    ║
   ║                                                    ║
   ║    Full Linux Desktop for Android & Samsung DeX    ║
   ║                                                    ║
@@ -608,7 +748,7 @@ select_options() {
 
 # ── INSTALL SUMMARY + GO-BACK ────────────────────────────────────────
 show_install_summary() {
-  local total=$SIZE_CORE
+  local total
   local de_size items=""
 
   case $DE_CHOICE in
@@ -617,23 +757,7 @@ show_install_summary() {
     4) de_size=$SIZE_GNOME;;
     *) de_size=$SIZE_XFCE4;;
   esac
-  total=$((total + de_size))
-
-  if [ "$INSTALL_PROOT" = "true" ]; then
-    total=$((total + SIZE_PROOT_BASE))
-    [ "$INSTALL_LIBREOFFICE" = "true" ] && total=$((total + SIZE_LIBREOFFICE))
-    [ "$INSTALL_GIMP"        = "true" ] && total=$((total + SIZE_GIMP))
-    [ "$INSTALL_INKSCAPE"    = "true" ] && total=$((total + SIZE_INKSCAPE))
-    [ "$INSTALL_VLC"         = "true" ] && total=$((total + SIZE_VLC))
-  fi
-  [ "$INSTALL_PYTHON"  = "true" ] && total=$((total + SIZE_PYTHON))
-  [ "$INSTALL_NODE"    = "true" ] && total=$((total + SIZE_NODE))
-  [ "$INSTALL_VSCODE"  = "true" ] && total=$((total + SIZE_VSCODE))
-  [ "$INSTALL_FIREFOX" = "true" ] && total=$((total + SIZE_FIREFOX))
-  [ "$INSTALL_CHROMIUM"= "true" ] && total=$((total + SIZE_CHROMIUM))
-  [ "$INSTALL_FILEMANAGER" = "true" ] && total=$((total + SIZE_FILES))
-  [ "$INSTALL_VNC"     = "true" ] && total=$((total + SIZE_VNC))
-  [ "$INSTALL_WINE"    = "true" ] && total=$((total + SIZE_WINE))
+  total=$(estimate_total_mb)
 
   echo ""
   echo -e "${WHITE}╔══════════════════════════════════════════════════════════════╗${NC}"
@@ -672,6 +796,42 @@ show_install_summary() {
   return 0
 }
 
+show_dry_run_plan() {
+  local total
+  total=$(estimate_total_mb)
+  echo ""
+  echo -e "${CYAN}Dry run: no packages will be installed and no files will be changed.${NC}"
+  echo ""
+  echo -e "  ${WHITE}Desktop   :${NC} $DE_NAME"
+  echo -e "  ${WHITE}GPU mode  :${NC} $GPU_DRIVER"
+  echo -e "  ${WHITE}Estimate  :${NC} ${total} MB"
+  [ "$INSTALL_PROOT" = "true" ] \
+    && echo -e "  ${WHITE}Container :${NC} $PROOT_LABEL (user: $PROOT_USER)" \
+    || echo -e "  ${WHITE}Container :${NC} skipped"
+  echo ""
+  echo "  Selected optional features:"
+  [ "$INSTALL_PYTHON" = "true" ] && echo "    - Python dev stack"
+  [ "$INSTALL_NODE" = "true" ] && echo "    - Node.js dev stack"
+  [ "$INSTALL_VSCODE" = "true" ] && echo "    - VS Code"
+  [ "$INSTALL_FIREFOX" = "true" ] && echo "    - Firefox"
+  [ "$INSTALL_CHROMIUM" = "true" ] && echo "    - Chromium"
+  [ "$INSTALL_FILEMANAGER" = "true" ] && echo "    - Desktop file manager"
+  [ "$INSTALL_VNC" = "true" ] && echo "    - VNC server ($VNC_GEOMETRY)"
+  [ "$INSTALL_WINE" = "true" ] && echo "    - Wine/Hangover"
+  [ "$INSTALL_LIBREOFFICE" = "true" ] && echo "    - LibreOffice in Proot"
+  [ "$INSTALL_GIMP" = "true" ] && echo "    - GIMP in Proot"
+  [ "$INSTALL_INKSCAPE" = "true" ] && echo "    - Inkscape in Proot"
+  [ "$INSTALL_VLC" = "true" ] && echo "    - VLC in Proot"
+  echo ""
+  echo "  Generated files during a real install would include:"
+  echo "    - ~/startdesk.sh and ~/stopdesk.sh"
+  echo "    - $PREFIX/bin/startdesk and $PREFIX/bin/stopdesk"
+  echo "    - $CONFIG_FILE"
+  [ "$INSTALL_PROOT" = "true" ] && echo "    - ~/start-proot.sh and ~/proot-menu-sync.sh"
+  [ "$INSTALL_VNC" = "true" ] && echo "    - ~/start-vnc.sh and ~/.vnc/xstartup"
+  echo ""
+}
+
 # ── USERNAME PROMPT (before install) ─────────────────────────────────
 prompt_proot_username() {
   [ "$INSTALL_PROOT" != "true" ] && return
@@ -681,6 +841,10 @@ prompt_proot_username() {
   printf "  Username for Linux container [default: droiduser]: "
   read -r USER_INPUT </dev/tty
   PROOT_USER="${USER_INPUT:-droiduser}"
+  if ! echo "$PROOT_USER" | grep -qE '^[a-z_][a-z0-9_-]{0,31}$'; then
+    echo -e "  ${YELLOW}Invalid username; using default 'droiduser'.${NC}"
+    PROOT_USER="droiduser"
+  fi
   echo -e "  ${GREEN}✓ Username: $PROOT_USER${NC}\n"
 }
 
@@ -1197,11 +1361,11 @@ rm -f "$HOME/.config/autostart/droidstation-first-run.desktop"
 FREOF
   chmod +x ~/.config/droidstation-first-run.sh
 
-  cat > ~/.config/autostart/droidstation-first-run.desktop << 'EOF'
+  cat > ~/.config/autostart/droidstation-first-run.desktop << EOF
 [Desktop Entry]
 Type=Application
 Name=DroidStation First Run
-Exec=bash /root/.config/droidstation-first-run.sh
+Exec=bash $HOME/.config/droidstation-first-run.sh
 NoDisplay=true
 X-GNOME-Autostart-enabled=true
 EOF
@@ -1253,7 +1417,7 @@ pulseaudio --start --exit-idle-time=-1; sleep 1
 pactl load-module module-native-protocol-tcp auth-ip-acl=127.0.0.1 auth-anonymous=1 2>/dev/null
 export PULSE_SERVER=127.0.0.1
 vncserver -localhost no -geometry ${VNC_GEOMETRY} -depth 24 :1
-DEVICE_IP=\$(ip -4 addr show wlan0 2>/dev/null | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | head -1)
+DEVICE_IP=\$(ip -4 addr show wlan0 2>/dev/null | awk '/inet /{split(\$2,a,"/"); print a[1]; exit}')
 echo ""
 echo "  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "  VNC is ready! Open any VNC Viewer:"
@@ -1308,7 +1472,7 @@ exec startplasma-x11"
   DEX_HINT=""
   [ "$DEX_MODE" = "true" ] && DEX_HINT="
   # Samsung DeX — apply optimized resolution
-  xrandr --output :0 --mode 1920x1080 2>/dev/null || true"
+  xrandr -s 1920x1080 2>/dev/null || true"
 
   # ── startdesk.sh ──────────────────────────────────────────────────
   cat > ~/startdesk.sh << LEOF
@@ -1322,8 +1486,8 @@ echo ""
 source ~/.config/droidstation-gpu.sh 2>/dev/null
 
 # Override Android's generated username with a friendly display name
-export USER="droiduser"
-export LOGNAME="droiduser"
+export USER="${PROOT_USER}"
+export LOGNAME="${PROOT_USER}"
 export HOSTNAME="droidstation"
 export HOST="droidstation"
 
@@ -1514,14 +1678,17 @@ DONE
 # MAIN
 # ══════════════════════════════════════════════════════════════════════
 main() {
-  # Init log
-  echo "DroidStation v${SCRIPT_VERSION} install log — $(date)" > "$LOG_FILE"
-
   parse_flags "$@"
   detect_installer_mode
+
+  if [ "$COMMAND" = "doctor" ]; then
+    run_doctor
+    exit 0
+  fi
+
   show_banner
 
-  if [ "$INSTALLER_MODE" != "flags" ]; then
+  if [ "$INSTALLER_MODE" != "flags" ] && [ "$DRY_RUN" != "true" ]; then
     echo -e "${WHITE}  This will install a full Linux desktop on your Android device.${NC}"
     echo -e "${GRAY}  Estimated time: 25–45 minutes${NC}"
     echo ""
@@ -1539,7 +1706,18 @@ main() {
   done
 
   prompt_proot_username
+  validate_options
+
+  if [ "$DRY_RUN" = "true" ]; then
+    show_dry_run_plan
+    exit 0
+  fi
+
+  # Init log only when the installer is about to make changes.
+  echo "DroidStation v${SCRIPT_VERSION} install log — $(date)" > "$LOG_FILE"
+
   calculate_total_steps
+  save_config
 
   step_update
   step_repos
@@ -1560,6 +1738,7 @@ main() {
   [ "$INSTALL_VNC" = "true" ] && step_vnc
   step_launchers
 
+  save_config
   show_completion
 }
 

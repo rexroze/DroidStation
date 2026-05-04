@@ -102,6 +102,20 @@ bash droidstation-setup.sh --de=xfce --distro=ubuntu --dev=python,node \
   --extras=vscode,firefox,libreoffice,gimp --wine
 ```
 
+#### Dry run
+Preview the install plan, estimated size, and generated files without changing anything.
+
+```bash
+bash droidstation-setup.sh dry-run --de=xfce --no-proot --extras=firefox
+```
+
+#### Doctor
+Check your current Termux environment before or after installing.
+
+```bash
+bash droidstation-setup.sh doctor
+```
+
 ### Available flags
 
 | Flag | Values | Description |
@@ -114,6 +128,7 @@ bash droidstation-setup.sh --de=xfce --distro=ubuntu --dev=python,node \
 | `--wine` | — | Install Wine/Hangover |
 | `--no-proot` | — | Skip Linux container entirely (saves ~800 MB) |
 | `--user=` | any username | Container username (default: `droiduser`) |
+| `--dry-run` | — | Show the install plan without making changes |
 | `--help` | — | Show help |
 
 ---
@@ -174,6 +189,7 @@ stopdesk
 | `bash ~/start-proot.sh` | Open the Linux container shell |
 | `bash ~/proot-menu-sync.sh` | Sync container apps into desktop menu |
 | `bash ~/start-vnc.sh` | Start VNC remote desktop (if installed) |
+| `bash droidstation-setup.sh doctor` | Check Termux, display, audio, storage, RAM, and Proot readiness |
 
 ---
 
@@ -365,6 +381,21 @@ export PULSE_SERVER=127.0.0.1
 cat ~/droidstation-install.log
 ```
 
+**Preview before installing**
+```bash
+bash droidstation-setup.sh dry-run --de=xfce --no-proot --extras=firefox
+```
+
+**Run environment checks**
+```bash
+bash droidstation-setup.sh doctor
+```
+
+**Uninstall DroidStation-created files**
+```bash
+bash uninstall.sh
+```
+
 ---
 
 ## Project Structure
@@ -372,6 +403,7 @@ cat ~/droidstation-install.log
 ```
 DroidStation/
 ├── droidstation-setup.sh   # Main installer
+├── uninstall.sh            # Cleanup helper
 └── README.md               # This file
 ```
 
@@ -393,6 +425,7 @@ After installation, the following are created in your home directory:
 │   └── WineExplorer.desktop
 ├── droidstation-install.log
 └── .config/
+    ├── droidstation/config.env      # Saved installer choices
     ├── droidstation-gpu.sh          # GPU environment vars (auto-sourced)
     ├── droidstation-wallpaper.jpg   # Generated wallpaper
     ├── droidstation-first-run.sh    # One-shot panel/theme setup
