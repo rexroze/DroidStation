@@ -34,11 +34,7 @@ The following are **out of scope**:
 
 **Please do not open a public GitHub issue for security vulnerabilities.**
 
-Report security issues privately by emailing:
-
-**security@rexroze.github.io** *(replace with your actual contact)*
-
-Or via GitHub's private vulnerability reporting:
+Report security issues via GitHub's private vulnerability reporting:
 **Security → Report a vulnerability** (in the repo's Security tab)
 
 Include in your report:
@@ -62,7 +58,7 @@ Include in your report:
 
 ## Security Notes for Users
 
-**VNC passwords** are stored in `~/.vnc/passwd` as a VNC-format hashed file (not plaintext). Still, avoid weak passwords if your device is on a shared network.
+**VNC passwords** are stored in `~/.vnc/passwd` as a VNC-format hashed file (not plaintext). DroidStation generates a password when VNC is selected without one, but you should still avoid weak passwords if your device is on a shared network.
 
 **Proot is not a security sandbox.** It provides filesystem isolation but does not prevent a process inside the container from accessing the Android host via Termux's shared `/proc`, shared temp directories, or X11 socket. Do not run untrusted code inside the Proot container and expect it to be isolated.
 

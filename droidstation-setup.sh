@@ -73,7 +73,7 @@ INSTALL_LIBREOFFICE="false"
 INSTALL_GIMP="false"
 INSTALL_INKSCAPE="false"
 INSTALL_VLC="false"
-VNC_PASS="123456"
+VNC_PASS=""
 VNC_GEOMETRY="1280x720"
 
 # Estimated install sizes (MB) — approximate
@@ -110,6 +110,7 @@ show_help() {
   echo "  --extras=<vscode,firefox,chromium,files,             Apps (comma-separated)"
   echo "           libreoffice,gimp,inkscape,vlc>"
   echo "  --vnc                                                Install VNC server"
+  echo "  --vnc-pass=<password>                                VNC password (6-8 chars; generated if omitted)"
   echo "  --wine                                               Install Wine/Hangover"
   echo "  --no-proot                                           Skip Proot container"
   echo "  --user=<username>                                    Container username (default: droiduser)"
@@ -195,6 +196,7 @@ parse_flags() {
           esac
         done;;
       --vnc)      FLAG_USED="true"; INSTALL_VNC="true";;
+      --vnc-pass=*) FLAG_USED="true"; VNC_PASS="${arg#*=}";;
       --wine)     FLAG_USED="true"; INSTALL_WINE="true";;
       --no-proot) FLAG_USED="true"; INSTALL_PROOT="false";;
       --user=*)   FLAG_USED="true"; PROOT_USER="${arg#*=}";;
@@ -214,6 +216,16 @@ validate_options() {
   if [ "$INSTALL_PROOT" != "true" ] && { [ "$INSTALL_LIBREOFFICE" = "true" ] || [ "$INSTALL_GIMP" = "true" ] || [ "$INSTALL_INKSCAPE" = "true" ] || [ "$INSTALL_VLC" = "true" ]; }; then
     echo "Container apps require Proot. Remove libreoffice/gimp/inkscape/vlc extras or omit --no-proot."
     exit 1
+  fi
+
+  if [ "$INSTALL_VNC" = "true" ]; then
+    if [ -z "$VNC_PASS" ]; then
+      VNC_PASS=$(tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 8)
+    fi
+    if ! printf '%s' "$VNC_PASS" | grep -qE '^.{6,8}$'; then
+      echo "Invalid VNC password. Use 6-8 characters because VNC only uses the first 8."
+      exit 1
+    fi
   fi
 
   if [ "$GPU_DRIVER" = "swrast" ] && { [ "$DE_CHOICE" = "2" ] || [ "$DE_CHOICE" = "4" ] || [ "$INSTALL_WINE" = "true" ]; }; then
@@ -618,9 +630,14 @@ select_options_prompt() {
   VNC_ANS=${VNC_ANS:-N}
   if echo "$VNC_ANS" | grep -qi '^y'; then
     INSTALL_VNC="true"
-    printf "  VNC password [default: 123456]: "
-    read -r VNC_PASS_IN </dev/tty
-    VNC_PASS="${VNC_PASS_IN:-123456}"
+    while true; do
+      printf "  VNC password (6-8 chars; blank to generate): "
+      read -r VNC_PASS_IN </dev/tty
+      VNC_PASS="$VNC_PASS_IN"
+      [ -z "$VNC_PASS" ] && break
+      printf '%s' "$VNC_PASS" | grep -qE '^.{6,8}$' && break
+      echo "  VNC passwords must be 6-8 characters; VNC ignores anything after 8."
+    done
     printf "  VNC resolution [default: 1280x720]: "
     read -r VNC_GEO_IN </dev/tty
     VNC_GEOMETRY="${VNC_GEO_IN:-1280x720}"
@@ -724,7 +741,7 @@ select_options_tui() {
       --yesno "Install VNC server?  ~${SIZE_VNC} MB\n(Remote/monitor display via WiFi or USB)" 9 55; then
     INSTALL_VNC="true"
     VNC_PASS_IN=$($TUI_CMD --title "VNC Password" \
-      --inputbox "Set a VNC password:" 8 45 "123456" 3>&1 1>&2 2>&3) && VNC_PASS="${VNC_PASS_IN:-123456}"
+      --inputbox "Set a VNC password (6-8 chars; blank to generate):" 8 60 "" 3>&1 1>&2 2>&3) && VNC_PASS="$VNC_PASS_IN"
     VNC_GEO_IN=$($TUI_CMD --title "VNC Resolution" \
       --inputbox "Set VNC resolution:" 8 45 "1280x720" 3>&1 1>&2 2>&3) && VNC_GEOMETRY="${VNC_GEO_IN:-1280x720}"
   fi

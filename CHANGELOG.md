@@ -59,9 +59,15 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- GitHub Actions shell workflow for formatting checks, ShellCheck errors, and installer smoke tests.
+- `--vnc-pass=<password>` flag for non-interactive VNC installs.
+
+### Changed
+- VNC no longer defaults to the fixed password `123456`; blank VNC passwords now generate an 8-character password during setup.
+
 ### Planned
 - ARM Mali GPU driver improvements
 - Dotfiles customization flag (`--dotfiles=<url>`)
 - Auto-update command: `droidstation update`
 - Wayland/XWayland support (experimental)
-- GitHub Actions shell linting with ShellCheck

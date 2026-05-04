@@ -125,6 +125,7 @@ bash droidstation-setup.sh doctor
 | `--dev=` | `python` `node` (comma-separated) | Dev stacks |
 | `--extras=` | `vscode` `firefox` `chromium` `files` `libreoffice` `gimp` `inkscape` `vlc` | Optional apps |
 | `--vnc` | — | Install TigerVNC server |
+| `--vnc-pass=` | any 6-8 character password | VNC password; generated if omitted |
 | `--wine` | — | Install Wine/Hangover |
 | `--no-proot` | — | Skip Linux container entirely (saves ~800 MB) |
 | `--user=` | any username | Container username (default: `droiduser`) |
@@ -300,6 +301,8 @@ bash ~/start-vnc.sh
 # Local:   127.0.0.1:5901
 # Network: <your-phone-ip>:5901
 ```
+
+If you enable VNC without setting `--vnc-pass`, DroidStation generates an 8-character password during setup and prints it on the completion screen.
 
 For a **Raspberry Pi monitor bridge** (for phones without USB-C display output):
 1. Connect phone to Pi via USB tethering
